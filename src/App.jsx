@@ -119,22 +119,22 @@ const App = () => {
   const [startPan, setStartPan] = useState({ x: 0, y: 0 });
 
   // --- 狀態控制 (加入數值防呆) ---
-  const [centerX, setCenterX] = useState(250);
-  const [centerY, setCenterY] = useState(250);
-  const [roiW, setRoiW] = useState(240);
-  const [roiH, setRoiH] = useState(140);
+  const [centerX, setCenterX] = useState(147);
+  const [centerY, setCenterY] = useState(188);
+  const [roiW, setRoiW] = useState(205);
+  const [roiH, setRoiH] = useState(80);
   const [scanDir, setScanDir] = useState('TopToBottom');
-  const [peakDir, setPeakDir] = useState('Auto');
-  const [sigma, setSigma] = useState(1.5);
-  const [threshold, setThreshold] = useState(25);
-  const [polarity, setPolarity] = useState('negative');
+  const [peakDir, setPeakDir] = useState('Highest');
+  const [sigma, setSigma] = useState(1);
+  const [threshold, setThreshold] = useState(10);
+  const [polarity, setPolarity] = useState('positive');
   const [edgeSelection, setEdgeSelection] = useState('all'); 
   const [offset, setOffset] = useState(0);
   const [isDebugMode, setIsDebugMode] = useState(true);
-  const [combDensity, setCombDensity] = useState(40);
+  const [combDensity, setCombDensity] = useState(80);
   const [peakCount, setPeakCount] = useState(5);
 
-  const [enableIQR, setEnableIQR] = useState(true);
+  const [enableIQR, setEnableIQR] = useState(false);
   const [iqrFactor, setIqrFactor] = useState(1.5);
   const [enableNeighbor, setEnableNeighbor] = useState(true);
   const [neighborK, setNeighborK] = useState(3);
