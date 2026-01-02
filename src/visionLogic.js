@@ -68,3 +68,28 @@ export const filterRollingBall = (points, direction, radius) => {
   }
   return result;
 };
+
+/**
+ * 穩健擬合 (Robust Fit) - 用於 Rake
+ */
+export const performRobustFit = (points, threshold = 6) => {
+  if (points.length < 2) return null;
+  const fit = (pts) => {
+    const n = pts.length;
+    let sx = 0, sy = 0, sxy = 0, sx2 = 0;
+    pts.forEach(p => { sx += p.x; sy += p.y; sxy += p.x * p.y; sx2 += p.x * p.x; });
+    const den = n * sx2 - sx * sx;
+    if (Math.abs(den) < 1e-8) return { m: 1e8, b: sx / n, isVertical: true };
+    const m = (n * sxy - sx * sy) / den;
+    const b = (sy - m * sx) / n;
+    return { m, b, isVertical: false };
+  };
+  const firstPass = fit(points);
+  const inliers = points.filter(p => {
+    const d = firstPass.isVertical ? Math.abs(p.x - firstPass.b) : Math.abs(firstPass.m * p.x - p.y + firstPass.b) / Math.sqrt(firstPass.m * firstPass.m + 1);
+    return d < threshold;
+  });
+  if (inliers.length < 2) return { ...firstPass, inliers: points, outliers: [] };
+  const refined = fit(inliers);
+  return { ...refined, inliers, outliers: points.filter(p => !inliers.includes(p)) };
+};

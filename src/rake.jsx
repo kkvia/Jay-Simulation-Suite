@@ -1,109 +1,14 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
-  Settings, Target, Zap, Info, ShieldCheck, Maximize2, Move, 
-  BarChart2, Eye, MousePointer2, CheckCircle2, AlertCircle, 
-  HelpCircle, ChevronRight, FileText, Layers, Wind, Filter, Bug,
-  Activity, Crosshair, Cpu, Gauge, ClipboardCheck, Radio, RefreshCw,
-  Upload, ImageIcon, Trash2, Sliders, Monitor, ZoomIn, ZoomOut, Hand,
-  Target as TargetIcon, AlignLeft
+  BarChart2, MousePointer2, Radio, Target as TargetIcon
 } from 'lucide-react';
+import { useRakeEngine } from './useRakeEngine';
+import RakeControls from './RakeControls';
+import { RAKE_LINES as WORLD_LINES } from './simulator';
 
 // --- 配置與版本 ---
 const AUTHOR = "Jay";
 const VERSION = "V4.2.0 - Rake Precision Engine";
-
-/**
- * 【物理模擬引擎】預設底圖線段
- * 這裡定義了具有真實寬度的實體邊緣
- */
-const WORLD_LINES = [
-  { id: 'Line_A', centerX: (y) => 180 + Math.sin(y / 45) * 15, width: 14, gray: 40 },
-  { id: 'Line_B', centerX: (y) => 280 + Math.cos(y / 55) * 10, width: 10, gray: 30 },
-  { id: 'Line_C', centerX: (y) => 380 - (y / 10), width: 8, gray: 20 },
-];
-
-const getSimulatedPixel = (x, y, noiseLevel = 0.2) => {
-  let grayBase = 245; 
-  for (const line of WORLD_LINES) {
-    const edgeX = line.centerX(y);
-    const halfW = line.width / 2;
-    if (x >= edgeX - halfW && x <= edgeX + halfW) {
-      grayBase = line.gray;
-      break;
-    }
-  }
-  const noise = (Math.random() - 0.5) * noiseLevel * 100;
-  return Math.max(0, Math.min(255, grayBase + noise));
-};
-
-const applyGaussian = (data, sigma) => {
-  if (sigma <= 0.4) return [...data];
-  const radius = Math.ceil(sigma * 3);
-  const kernel = [];
-  let sum = 0;
-  for (let i = -radius; i <= radius; i++) {
-    const g = Math.exp(-(i * i) / (2 * sigma * sigma));
-    kernel.push(g);
-    sum += g;
-  }
-  const normKernel = kernel.map(v => v / sum);
-  return data.map((_, i) => {
-    let acc = 0;
-    for (let k = -radius; k <= radius; k++) {
-      const idx = Math.min(Math.max(i + k, 0), data.length - 1);
-      acc += data[idx] * normKernel[k + radius];
-    }
-    return acc;
-  });
-};
-
-// --- Rake 擬合與濾波邏輯 ---
-
-/**
- * 穩健擬合 (Robust Fit)
- */
-const performRobustFit = (points, threshold = 6) => {
-  if (points.length < 2) return null;
-  const fit = (pts) => {
-    const n = pts.length;
-    let sx = 0, sy = 0, sxy = 0, sx2 = 0;
-    pts.forEach(p => { sx += p.x; sy += p.y; sxy += p.x * p.y; sx2 += p.x * p.x; });
-    const den = n * sx2 - sx * sx;
-    if (Math.abs(den) < 1e-8) return { m: 1e8, b: sx / n, isVertical: true };
-    const m = (n * sxy - sx * sy) / den;
-    const b = (sy - m * sx) / n;
-    return { m, b, isVertical: false };
-  };
-  const firstPass = fit(points);
-  const inliers = points.filter(p => {
-    const d = firstPass.isVertical ? Math.abs(p.x - firstPass.b) : Math.abs(firstPass.m * p.x - p.y + firstPass.b) / Math.sqrt(firstPass.m * firstPass.m + 1);
-    return d < threshold;
-  });
-  if (inliers.length < 2) return { ...firstPass, inliers: points, outliers: [] };
-  const refined = fit(inliers);
-  return { ...refined, inliers, outliers: points.filter(p => !inliers.includes(p)) };
-};
-
-// --- 抗噪濾波組件 (移植自 Jay 的 Comb 邏輯) ---
-const filterIQR = (points, factor) => {
-  if (points.length < 4) return points;
-  const values = points.map(p => p.x).sort((a, b) => a - b);
-  const q1 = values[Math.floor(values.length * 0.25)];
-  const q3 = values[Math.floor(values.length * 0.75)];
-  const iqr = q3 - q1;
-  return points.filter(p => p.x >= q1 - factor * iqr && p.x <= q3 + factor * iqr);
-};
-
-const filterNeighborhood = (points, k, threshold) => {
-  if (points.length <= k) return points;
-  return points.filter(p1 => {
-    const dists = points.filter(p2 => p1 !== p2)
-      .map(p2 => Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2)))
-      .sort((a, b) => a - b);
-    const avgDist = dists.slice(0, k).reduce((sum, d) => sum + d, 0) / k;
-    return avgDist <= threshold;
-  });
-};
 
 const App = () => {
   const [imageSource, setImageSource] = useState(null);
@@ -117,35 +22,16 @@ const App = () => {
   const [isPanning, setIsPanning] = useState(false);
   const [startPan, setStartPan] = useState({ x: 0, y: 0 });
 
-  // --- Rake 控制狀態 ---
-  const [centerX, setCenterX] = useState(250);
-  const [centerY, setCenterY] = useState(250);
-  const [roiL1, setRoiL1] = useState(120);
-  const [roiL2, setRoiL2] = useState(140);
-  const [direction, setDirection] = useState('LeftToRight');
-  const [sigma, setSigma] = useState(1.2);
-  const [threshold, setThreshold] = useState(25);
-  const [polarity, setPolarity] = useState('negative');
-  const [sampleCount, setSampleCount] = useState(40);
-  const [offset, setOffset] = useState(0);
+  // --- Rake 配置狀態 ---
+  const [config, setConfig] = useState({
+    centerX: 250, centerY: 250, roiL1: 120, roiL2: 140,
+    direction: 'LeftToRight', sigma: 1.2, threshold: 25,
+    polarity: 'negative', sampleCount: 40, offset: 0,
+    enableIQR: true, iqrFactor: 1.5,
+    enableNeighbor: true, neighborK: 3, neighborThreshold: 15
+  });
+
   const [activeTooth, setActiveTooth] = useState(0);
-
-  // --- 濾波開關 ---
-  const [enableIQR, setEnableIQR] = useState(true);
-  const [iqrFactor, setIqrFactor] = useState(1.5);
-  const [enableNeighbor, setEnableNeighbor] = useState(true);
-  const [neighborK, setNeighborK] = useState(3);
-  const [neighborThreshold, setNeighborThreshold] = useState(15);
-
-  const phi = useMemo(() => {
-    switch (direction) {
-      case 'TopToBottom': return -Math.PI / 2;
-      case 'BottomToTop': return Math.PI / 2;
-      case 'LeftToRight': return 0;
-      case 'RightToLeft': return Math.PI;
-      default: return 0;
-    }
-  }, [direction]);
 
   // --- 圖片上傳邏輯 ---
   const handleImageUpload = (e) => {
@@ -167,74 +53,8 @@ const App = () => {
     reader.readAsDataURL(file);
   };
 
-  const samplePixel = (x, y) => {
-    if (pixelData) {
-      const ix = Math.floor(Math.max(0, Math.min(499, x)));
-      const iy = Math.floor(Math.max(0, Math.min(499, y)));
-      const idx = (iy * 500 + ix) * 4;
-      return (pixelData[idx] * 0.299 + pixelData[idx+1] * 0.587 + pixelData[idx+2] * 0.114);
-    }
-    return getSimulatedPixel(x, y);
-  };
-
   // --- RAKE 計算核心 ---
-  const rakeData = useMemo(() => {
-    const cosP = Math.cos(phi);
-    const sinP = Math.sin(phi);
-    const teeth = [];
-    const rawDetectedPoints = [];
-
-    for (let i = 0; i < sampleCount; i++) {
-      const relY = (i / (sampleCount - 1) - 0.5) * (roiL2 * 2);
-      const getCoord = (relX) => ({
-        x: centerX + (relX * cosP - relY * sinP),
-        y: centerY + (relX * sinP + relY * cosP)
-      });
-      const start = getCoord(-roiL1);
-      const end = getCoord(roiL1);
-
-      const profile = [];
-      const steps = Math.max(40, Math.floor(roiL1 * 2));
-      for (let s = 0; s < steps; s++) {
-        const t = s / (steps - 1);
-        profile.push(samplePixel(start.x + (end.x - start.x) * t, start.y + (end.y - start.y) * t));
-      }
-
-      const smoothed = applyGaussian(profile, sigma);
-      const deriv = smoothed.map((v, idx) => idx === 0 ? 0 : v - smoothed[idx - 1]);
-      
-      let bestIdx = -1;
-      let maxAmp = 0;
-      for (let j = 0; j < deriv.length; j++) {
-        const val = deriv[j];
-        const isMatch = (polarity === 'positive' && val > threshold) || (polarity === 'negative' && val < -threshold);
-        if (isMatch && Math.abs(val) > maxAmp) {
-          maxAmp = Math.abs(val);
-          bestIdx = j;
-        }
-      }
-
-      let edgePt = null;
-      let correctedPt = null;
-      if (bestIdx !== -1) {
-        const t = bestIdx / (steps - 1);
-        const wx = start.x + (end.x - start.x) * t;
-        const wy = start.y + (end.y - start.y) * t;
-        edgePt = { x: wx, y: wy };
-        correctedPt = { x: wx + offset * cosP, y: wy + offset * sinP };
-        rawDetectedPoints.push(correctedPt);
-      }
-      teeth.push({ id: i, start, end, profile, smoothed, deriv, edgePt, correctedPt, bestIdx });
-    }
-
-    // 應用過濾層 (IQR, Neighborhood)
-    let filteredPoints = [...rawDetectedPoints];
-    if (enableIQR) filteredPoints = filterIQR(filteredPoints, iqrFactor);
-    if (enableNeighbor) filteredPoints = filterNeighborhood(filteredPoints, neighborK, neighborThreshold);
-
-    const fitResult = performRobustFit(filteredPoints, 6);
-    return { teeth, fitResult, rawDetectedPoints, filteredPoints };
-  }, [centerX, centerY, roiL1, roiL2, phi, sampleCount, sigma, threshold, polarity, offset, pixelData, enableIQR, iqrFactor, enableNeighbor, neighborK, neighborThreshold]);
+  const rakeData = useRakeEngine(pixelData, config);
 
   const activeData = rakeData.teeth[activeTooth] || rakeData.teeth[0];
 
@@ -246,13 +66,13 @@ const App = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans selection:bg-indigo-100">
+    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans selection:bg-indigo-100 overflow-auto">
       <canvas ref={canvasRef} style={{ display: 'none' }} />
 
-      <div className="max-w-[1850px] mx-auto p-6 h-screen flex flex-col gap-6 overflow-hidden">
+      <div className="max-w-[1850px] mx-auto p-4 lg:p-6 min-h-screen flex flex-col gap-6">
         
         {/* Header */}
-        <header className="bg-white px-8 py-5 rounded-[2.5rem] shadow-sm border border-slate-100 flex justify-between items-center shrink-0">
+        <header className="bg-white px-6 py-5 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col lg:flex-row justify-between items-center shrink-0 gap-4">
           <div className="flex items-center gap-6">
             <div className="p-3 bg-indigo-600 rounded-2xl shadow-lg shadow-indigo-100">
               <TargetIcon className="w-8 h-8 text-white" />
@@ -282,14 +102,14 @@ const App = () => {
           </div>
         </header>
 
-        <main className="flex-1 flex gap-6 overflow-hidden min-h-0">
+        <main className="flex-1 flex flex-col lg:flex-row gap-6 min-h-0">
           
           {/* 左側：核心監視器與分析 */}
-          <div className="flex-1 flex flex-col gap-6 overflow-hidden min-w-0">
+          <div className="flex-1 flex flex-col gap-6 min-w-0">
             
             {/* 主監視器 */}
             <div 
-              className={`flex-1 bg-white rounded-[3.5rem] border-[10px] border-white shadow-2xl relative overflow-hidden ring-1 ring-slate-200 ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
+              className={`h-[400px] lg:h-auto lg:flex-1 bg-white rounded-[2rem] lg:rounded-[3.5rem] border-[6px] lg:border-[10px] border-white shadow-2xl relative overflow-hidden ring-1 ring-slate-200 ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
               onWheel={handleWheel}
               onMouseDown={(e) => { if(e.button === 0){ setIsPanning(true); setStartPan({x: e.clientX - viewOffset.x, y: e.clientY - viewOffset.y}); } }}
               onMouseMove={(e) => { if(isPanning) setViewOffset({x: e.clientX - startPan.x, y: e.clientY - startPan.y}); }}
@@ -316,12 +136,12 @@ const App = () => {
                   )}
 
                   {/* ROI 控制器 */}
-                  <g transform={`translate(${centerX}, ${centerY}) rotate(${phi * 180 / Math.PI})`}>
+                  <g transform={`translate(${config.centerX}, ${config.centerY}) rotate(${rakeData.phi * 180 / Math.PI})`}>
                     <rect 
-                      x={-roiL1} y={-roiL2} width={roiL1*2} height={roiL2*2} 
+                      x={-config.roiL1} y={-config.roiL2} width={config.roiL1*2} height={config.roiL2*2} 
                       fill="rgba(79, 70, 229, 0.02)" stroke="#4F46E5" strokeWidth={1/viewScale} strokeDasharray={`${8/viewScale} ${4/viewScale}`}
                     />
-                    <line x1={-roiL1} y1="0" x2={-roiL1-30/viewScale} y2="0" stroke="#4F46E5" strokeWidth={3/viewScale} markerEnd="url(#arrow-rake)" />
+                    <line x1={-config.roiL1} y1="0" x2={-config.roiL1-30/viewScale} y2="0" stroke="#4F46E5" strokeWidth={3/viewScale} markerEnd="url(#arrow-rake)" />
                   </g>
 
                   {/* 採樣齒與邊緣點 */}
@@ -409,8 +229,8 @@ const App = () => {
                     <span className="absolute top-2 left-3 text-[8px] font-black text-slate-400 uppercase tracking-widest text-xs">Gradient Derivative</span>
                     <svg viewBox={`0 0 ${activeData.deriv.length} 100`} className="w-full h-full" preserveAspectRatio="none">
                       <polyline fill="none" stroke="#F43F5E" strokeWidth="2" points={activeData.deriv.map((v, i) => `${i},${50 - v}`).join(' ')} />
-                      <line x1="0" y1={50 - threshold} x2={activeData.deriv.length} y2={50 - threshold} stroke="#F59E0B" strokeWidth="1" strokeDasharray="5 5" />
-                      <line x1="0" y1={50 + threshold} x2={activeData.deriv.length} y2={50 + threshold} stroke="#F59E0B" strokeWidth="1" strokeDasharray="5 5" />
+                      <line x1="0" y1={50 - config.threshold} x2={activeData.deriv.length} y2={50 - config.threshold} stroke="#F59E0B" strokeWidth="1" strokeDasharray="5 5" />
+                      <line x1="0" y1={50 + config.threshold} x2={activeData.deriv.length} y2={50 + config.threshold} stroke="#F59E0B" strokeWidth="1" strokeDasharray="5 5" />
                     </svg>
                   </div>
                </div>
@@ -418,115 +238,13 @@ const App = () => {
           </div>
 
           {/* 右側：精準控制台 */}
-          <div className="w-[420px] flex flex-col gap-6 overflow-y-auto pr-2 custom-scrollbar shrink-0">
-            
-            {/* 上傳 */}
-            <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-lg space-y-4">
-               <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 font-bold"><ImageIcon className="w-4 h-4 text-indigo-500" /> Image Source</h3>
-               <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
-               <button onClick={() => fileInputRef.current.click()} className="w-full py-4 bg-indigo-50 text-indigo-600 rounded-2xl border-2 border-dashed border-indigo-200 text-[10px] font-black uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center gap-2 font-bold">
-                 <Upload className="w-4 h-4" /> {imageSource ? "Change Data Base" : "Upload Bottom Map"}
-               </button>
-            </div>
-
-            {/* ROI Setup */}
-            <div className="bg-white p-7 rounded-[2rem] border border-slate-100 shadow-lg space-y-8 font-bold">
-              <div className="flex items-center justify-between">
-                <h3 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-2"><Maximize2 className="w-4 h-4" /> ROI Positioning</h3>
-              </div>
-              <div className="grid grid-cols-2 gap-8 font-bold">
-                  {[
-                    { label: "Center X", val: centerX, set: setCenterX, min: 0, max: 500 },
-                    { label: "Center Y", val: centerY, set: setCenterY, min: 0, max: 500 },
-                    { label: "L1 Length", val: roiL1, set: setRoiL1, min: 10, max: 250 },
-                    { label: "L2 Width", val: roiL2, set: setRoiL2, min: 10, max: 250 }
-                  ].map((item, idx) => (
-                    <div key={idx} className="space-y-3">
-                      <div className="flex justify-between items-center text-[10px] font-black uppercase">
-                        <span className="text-slate-400">{item.label}</span>
-                        <span className="text-indigo-600 font-mono">{Math.round(item.val)}</span>
-                      </div>
-                      <input type="range" min={item.min} max={item.max} value={item.val} onChange={e=>item.set(Number(e.target.value))} className="w-full h-1 bg-slate-100 rounded-full appearance-none cursor-pointer accent-indigo-600" />
-                    </div>
-                  ))}
-              </div>
-              <div className="grid grid-cols-2 gap-2 pt-2">
-                {['TopToBottom', 'BottomToTop', 'LeftToRight', 'RightToLeft'].map(d => (
-                  <button key={d} onClick={() => setDirection(d)} className={`py-3 text-[9px] font-black rounded-xl border-2 transition-all ${direction === d ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg font-bold' : 'bg-white border-slate-100 text-slate-400 font-bold'}`}>{d}</button>
-                ))}
-              </div>
-            </div>
-
-            {/* Algorithm Logic */}
-            <div className="bg-white p-7 rounded-[2rem] border border-slate-100 shadow-lg space-y-10 font-bold">
-              <h3 className="text-[10px] font-black text-amber-500 uppercase tracking-widest flex items-center gap-2"><Settings className="w-4 h-4" /> Algorithm Control</h3>
-              <div className="space-y-10">
-                <div className="space-y-4 font-bold">
-                  <div className="flex justify-between items-center font-bold"><label className="text-[11px] font-black text-slate-600 uppercase tracking-widest">Sigma</label><span className="text-indigo-600 font-mono text-xs font-bold">{sigma.toFixed(1)}</span></div>
-                  <input type="range" min="0.4" max="5.0" step="0.1" value={sigma} onChange={e=>setSigma(Number(e.target.value))} className="w-full h-2 bg-slate-100 rounded-full appearance-none cursor-pointer accent-indigo-600" />
-                </div>
-                <div className="space-y-4 font-bold">
-                  <div className="flex justify-between items-center font-bold"><label className="text-[11px] font-black text-slate-600 uppercase tracking-widest font-bold">Threshold</label><span className="text-amber-600 font-mono text-xs font-bold">{threshold}</span></div>
-                  <input type="range" min="5" max="100" value={threshold} onChange={e=>setThreshold(Number(e.target.value))} className="w-full h-2 bg-slate-100 rounded-full appearance-none cursor-pointer accent-amber-500" />
-                </div>
-                <div className="grid grid-cols-2 gap-8 font-bold">
-                  <div className="space-y-3 font-bold">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">齒數 (Teeth)</label>
-                    <input type="number" value={sampleCount} onChange={e=>setSampleCount(Number(e.target.value))} className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 text-xs font-black font-mono focus:ring-2 focus:ring-indigo-500 outline-none" />
-                  </div>
-                  <div className="space-y-3 font-bold">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">補正 (Offset)</label>
-                    <input type="number" value={offset} onChange={e=>setOffset(Number(e.target.value))} className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 text-xs font-black font-mono focus:ring-2 focus:ring-indigo-500 outline-none" />
-                  </div>
-                </div>
-                <div className="pt-4 border-t border-slate-50 flex gap-4">
-                   <div className="flex-1 space-y-3 font-bold">
-                     <label className="text-[9px] font-black text-slate-400 uppercase">Polarity</label>
-                     <div className="flex p-1 bg-slate-100 rounded-xl font-bold">
-                        <button onClick={()=>setPolarity('negative')} className={`flex-1 py-2 rounded-lg text-[9px] font-black transition-all ${polarity === 'negative' ? 'bg-white shadow text-indigo-600' : 'text-slate-400 font-bold'}`}>Negative</button>
-                        <button onClick={()=>setPolarity('positive')} className={`flex-1 py-2 rounded-lg text-[9px] font-black transition-all ${polarity === 'positive' ? 'bg-white shadow text-indigo-600' : 'text-slate-400 font-bold'}`}>Positive</button>
-                     </div>
-                   </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Filter Layers */}
-            <div className="bg-white p-7 rounded-[2rem] border border-slate-100 shadow-lg space-y-6">
-               <h3 className="text-[10px] font-black text-emerald-500 uppercase tracking-widest flex items-center gap-2"><Filter className="w-4 h-4" /> Filter Layers (Jay's Logic)</h3>
-               <div className="space-y-4">
-                  <div className={`p-4 rounded-2xl border transition-all ${enableIQR ? 'bg-indigo-50/30 border-indigo-100' : 'bg-slate-50 border-slate-100'}`}>
-                    <div className="flex justify-between items-center mb-4">
-                      <span className="text-[10px] font-black text-slate-600">IQR 統計離群剔除</span>
-                      <button onClick={()=>setEnableIQR(!enableIQR)} className={`w-10 h-5 rounded-full relative transition-colors ${enableIQR ? 'bg-indigo-600' : 'bg-slate-300'}`}><div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${enableIQR ? 'left-6' : 'left-1'}`}></div></button>
-                    </div>
-                    <input type="range" min="0.5" max="3" step="0.1" value={iqrFactor} onChange={e=>setIqrFactor(Number(e.target.value))} disabled={!enableIQR} className="w-full h-1 bg-slate-200 rounded-full appearance-none accent-indigo-600" />
-                  </div>
-                  <div className={`p-4 rounded-2xl border transition-all ${enableNeighbor ? 'bg-indigo-50/30 border-indigo-100' : 'bg-slate-50 border-slate-100'}`}>
-                    <div className="flex justify-between items-center mb-4">
-                      <span className="text-[10px] font-black text-slate-600">鄰域一致性 (K-Dist)</span>
-                      <button onClick={()=>setEnableNeighbor(!enableNeighbor)} className={`w-10 h-5 rounded-full relative transition-colors ${enableNeighbor ? 'bg-indigo-600' : 'bg-slate-300'}`}><div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${enableNeighbor ? 'left-6' : 'left-1'}`}></div></button>
-                    </div>
-                    <input type="range" min="5" max="30" value={neighborThreshold} onChange={e=>setNeighborThreshold(Number(e.target.value))} disabled={!enableNeighbor} className="w-full h-1 bg-slate-200 rounded-full appearance-none accent-indigo-600" />
-                  </div>
-               </div>
-            </div>
-
-            {/* Jay's Expert Insights */}
-            <div className="bg-[#0F172A] rounded-[2rem] p-8 shadow-2xl relative overflow-hidden shrink-0">
-               <div className="relative z-10 space-y-4 font-bold">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-indigo-500 rounded-lg animate-pulse"><FileText className="w-4 h-4 text-white" /></div>
-                    <span className="text-white font-black text-[10px] uppercase tracking-widest">量測實驗室報告</span>
-                  </div>
-                  <div className="space-y-4 text-[11px] text-slate-400 leading-relaxed font-medium">
-                    <p className="border-l-2 border-indigo-500 pl-4"><b>極性對齊：</b> 實體邊緣具備厚度。在 <code className="text-indigo-400">Negative</code> 極性下，Rake 鎖定進入線段的邊界；在 <code className="text-indigo-400">Positive</code> 下，鎖定離開線段的邊界。</p>
-                    <p className="border-l-2 border-emerald-500 pl-4"><b>穩健擬合：</b> 畫面上 <span className="text-rose-500 font-bold font-bold">紅色點</span> 代表被過濾層或 Tukey 算法剔除的離群值。這能確保即便底圖有嚴重污漬，擬合直線依然能保持亞像素精度。</p>
-                  </div>
-               </div>
-               <Wind className="absolute -right-10 -bottom-10 w-48 h-48 text-indigo-500 opacity-5" />
-            </div>
-          </div>
+          <RakeControls 
+            config={config} 
+            setConfig={setConfig} 
+            imageSource={imageSource} 
+            fileInputRef={fileInputRef} 
+            handleImageUpload={handleImageUpload} 
+          />
         </main>
       </div>
 

@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
-import { applyGaussian, filterIQR, filterNeighborhood, filterRollingBall } from '../../domain/services/visionLogic';
-import { getSimulatedPixel } from '../../infrastructure/simulator';
+import { applyGaussian, filterIQR, filterNeighborhood, filterRollingBall } from './visionLogic';
+import { getCombPixel as getSimulatedPixel } from './simulator';
 
 export const useCombEngine = (pixelData, config) => {
   const {

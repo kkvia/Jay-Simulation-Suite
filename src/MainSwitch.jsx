@@ -40,7 +40,7 @@ const MainSwitch = () => {
           <p className="text-slate-400 font-medium text-lg">Select an experimental engine to begin analysis</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Comb Card */}
           <button 
             onClick={() => setActiveModule('comb')}
