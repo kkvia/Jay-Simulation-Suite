@@ -1,0 +1,48 @@
+# 這是 GitHub Actions 的名稱
+name: Deploy to GitHub Pages
+
+on:
+  # 當你推送到 main 分支時觸發
+  push:
+    branches: [ "main" ]
+  # 允許手動從 Actions 頁面觸發
+  workflow_dispatch:
+
+# 設定權限，允許此腳本寫入 GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 只有一個部署工作
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Vite 預設打包輸出的資料夾是 dist
+          path: './dist'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

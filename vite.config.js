@@ -1,8 +1,9 @@
+// vite.config.js
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// https://vite.dev/config/
 export default defineConfig({
-  base: '/comb-simulator/',
+  // 必須與你的 GitHub Repo 名稱一致
+  base: '/comb-engine-simulator/', 
   plugins: [react()],
 })
