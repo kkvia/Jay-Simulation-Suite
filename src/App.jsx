@@ -123,7 +123,7 @@ const App = () => {
   const [centerY, setCenterY] = useState(188);
   const [roiW, setRoiW] = useState(205);
   const [roiH, setRoiH] = useState(80);
-  const [scanDir, setScanDir] = useState('TopToBottom');
+  const [scanDir, setScanDir] = useState('BottomToTop');
   const [peakDir, setPeakDir] = useState('Highest');
   const [sigma, setSigma] = useState(1);
   const [threshold, setThreshold] = useState(10);
