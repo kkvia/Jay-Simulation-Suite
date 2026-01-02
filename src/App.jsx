@@ -7,6 +7,7 @@ import {
   Upload, ImageIcon, Trash2, Sliders, Monitor, ZoomIn, ZoomOut, Hand,
   Target as TargetIcon
 } from 'lucide-react';
+import defaultImage from '../default.png';
 
 // --- 配置與版本 ---
 const AUTHOR = "Jay";
@@ -105,7 +106,7 @@ const filterRollingBall = (points, direction, radius) => {
 };
 
 const App = () => {
-  const [imageSource, setImageSource] = useState(null);
+  const [imageSource, setImageSource] = useState(defaultImage);
   const [pixelData, setPixelData] = useState(null);
   const canvasRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -140,6 +141,24 @@ const App = () => {
   const [neighborThreshold, setNeighborThreshold] = useState(15);
   const [enableRolling, setEnableRolling] = useState(true);
   const [rollingRadius, setRollingRadius] = useState(12);
+
+  // 初始化載入預設圖片的像素資料
+  useEffect(() => {
+    if (imageSource && !pixelData) {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        canvas.width = 500;
+        canvas.height = 500;
+        ctx.drawImage(img, 0, 0, 500, 500);
+        const data = ctx.getImageData(0, 0, 500, 500).data;
+        setPixelData(data);
+      };
+      img.src = imageSource;
+    }
+  }, []);
 
   // --- 圖片處理邏輯 ---
   const handleImageUpload = (e) => {
